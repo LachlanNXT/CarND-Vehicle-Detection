@@ -12,6 +12,9 @@ from sklearn.svm import LinearSVC
 import sklearn.svm as svm
 from scipy.ndimage.measurements import label
 from collections import deque
+# Import everything needed to edit/save/watch video clips
+from moviepy.editor import VideoFileClip
+from IPython.display import HTML
 
 CLASSIFIER_LABEL        = "Classifier"
 X_SCALER_LABEL          = "XScaler"
@@ -352,7 +355,7 @@ def find_cars(img, Data): #ystart, ystop, scale, svc, X_scaler, orient, pix_per_
     draw_img = np.copy(img)
     
     img_tosearch = img[Data.y_start_stop[0]:Data.y_start_stop[1],:,:]
-    ctrans_tosearch = convert_color(img_tosearch, conv='RGB2YCrCb')
+    ctrans_tosearch = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)#convert_color(img_tosearch, conv='RGB2YCrCb')
     #if scale != 1:
     #    imshape = ctrans_tosearch.shape
     #    ctrans_tosearch = cv2.resize(ctrans_tosearch, (np.int(imshape[1]/scale), np.int(imshape[0]/scale)))
@@ -378,6 +381,7 @@ def find_cars(img, Data): #ystart, ystop, scale, svc, X_scaler, orient, pix_per_
     hog2 = get_hog_features(ch2, Data.orient, Data.pix_per_cell, Data.cell_per_block, feature_vec=False)
     hog3 = get_hog_features(ch3, Data.orient, Data.pix_per_cell, Data.cell_per_block, feature_vec=False)
     
+    on_windows = []
     for xb in range(nxsteps):
         for yb in range(nysteps):
             ypos = yb*cells_per_step
@@ -396,7 +400,7 @@ def find_cars(img, Data): #ystart, ystop, scale, svc, X_scaler, orient, pix_per_
           
             # Get color features
             spatial_features = bin_spatial(subimg, size=Data.spatial)
-            hist_features = color_hist(subimg, nbins=Data.hist_bins)
+            hist_features = color_hist(subimg, nbins=Data.histbin)
 
             # Scale features and make a prediction
             test_features = Data.X_scaler.transform(np.hstack((spatial_features, hist_features, hog_features)).reshape(1, -1))    
@@ -404,12 +408,14 @@ def find_cars(img, Data): #ystart, ystop, scale, svc, X_scaler, orient, pix_per_
             test_prediction = Data.svc.predict(test_features)
             
             if test_prediction == 1:
-                xbox_left = np.int(xleft*scale)
-                ytop_draw = np.int(ytop*scale)
-                win_draw = np.int(window*scale)
-                cv2.rectangle(draw_img,(xbox_left, ytop_draw+ystart),(xbox_left+win_draw,ytop_draw+win_draw+ystart),(0,0,255),6) 
+                xbox_left = np.int(xleft) #*scale)
+                ytop_draw = np.int(ytop) #*scale)
+                win_draw = np.int(window) #*scale)
+                #cv2.rectangle(draw_img,(xbox_left, ytop_draw+ystart),(xbox_left+win_draw,ytop_draw+win_draw+ystart),(0,0,255),6) 
+                on_windows.append(((xbox_left, ytop_draw+Data.y_start_stop[0]),(xbox_left+win_draw,ytop_draw+win_draw+Data.y_start_stop[0])))
+                #((startx, starty), (endx, endy))
                 
-    return draw_img
+    return on_windows #draw_img
 
 # Define a function to draw bounding boxes
 def draw_boxes(img, bboxes, color=(0, 0, 255), thick=6):
@@ -455,7 +461,7 @@ def draw_labeled_bboxes(img, labels):
 
 
 def pipeline(Data, draw_image):
-
+    
     hot_windows_large = search_windows(draw_image, Data.windows_large, Data.svc, Data.X_scaler,
                             color_space=Data.colourspace, 
                             spatial_size=Data.spatial, hist_bins=Data.histbin, 
@@ -481,32 +487,74 @@ def pipeline(Data, draw_image):
     hot_windows_large = np.array(hot_windows_large)
     hot_windows_medium = np.array(hot_windows_medium)
     hot_windows_small = np.array(hot_windows_small)
-
     #print(hot_windows_large.shape, hot_windows_medium.shape, hot_windows_small.shape)
+    
+    #windows = find_cars(draw_image, Data)
+    #windows = np.array(windows)
 
     if sum([x.size>0 for x in [hot_windows_large, hot_windows_medium, hot_windows_small]]) > 0:
+    #if windows.size>0:
         box_list = np.concatenate([x for x in [hot_windows_large, hot_windows_medium, hot_windows_small] if x.size > 0])
+        #box_list = windows
         #print(box_list.shape)
         heat = np.zeros_like(draw_image[:,:,0]).astype(np.float)
 
-        thresh = 5
+        thresh = 4
         # Add heat to each box in box list
         heat = add_heat(heat,box_list)
-        if Data.hot_count<3:
+        heat = (apply_threshold(heat,thresh)>0).astype(float)
+        #plt.figure()
+        #plt.title('heat')
+        #plt.imshow(np.dstack((heat,heat,heat)).astype(float))
+        #plt.show()
+        #plt.close()
+        allone = np.ones_like(heat).astype(float)
+        if Data.hot_count<12:
+            #thresh = 4
             Data.hot_count+=1
+            #heat = (apply_threshold(heat,thresh)>0).astype(float)
+            #plt.figure()
+            #plt.title('heat2')
+            #plt.imshow(np.dstack((heat,heat,heat)).astype(float))
+            #plt.show()
+            #plt.close()
             Data.hotmap.append(heat)
-            thresh = 5
         else:
             Data.hotmap.popleft()
+            #thresh = 4
+            #heat = (apply_threshold(heat,thresh)>0).astype(float)
             Data.hotmap.append(heat)
-            heat = sum(Data.hotmap)
-            thresh = 15
+            for i in Data.hotmap:
+                #plt.figure()
+                #plt.title('i')
+                #plt.imshow(np.dstack((i,i,i)).astype(float))
+                #plt.show()
+                #plt.close()
+                #plt.figure()
+                #plt.title('allone')
+                #plt.imshow(np.dstack((allone,allone,allone)).astype(float))
+                #plt.show()
+                #plt.close()
+                allone = allone.astype(int) & i.astype(int) #cv2.bitwise_and(allone,test)
+                #plt.figure()
+                #plt.title('anded')
+                #plt.imshow(np.dstack((allone,allone,allone)).astype(float))
+                #plt.show()
+                #plt.close()
+            heat = allone
+            #heat = sum(Data.hotmap)
             
         # Apply threshold to help remove false positives
-        heat = apply_threshold(heat,thresh)
+        #heat2 = apply_threshold(heat,thresh)*6
+        #heat2 = (heat2>0)*255
+        #heat2 = heat*255
 
         # Visualize the heatmap when displaying    
         heatmap = np.clip(heat, 0, 255)
+        heatmap = np.dstack((heatmap,heatmap,heatmap))
+        #heatmap2 = np.clip(heat2, 0,255)
+        #heatmap2 = np.dstack((heatmap2, heatmap2, heatmap2))
+        #allone = np.dstack((allone,allone,allone))
 
         # Find final boxes from heatmap using label function
         labels = label(heatmap)
@@ -514,9 +562,12 @@ def pipeline(Data, draw_image):
     else:
         box_list = None
         draw_image = draw_image*255
+        #print('no boxes')
     #window_img = draw_boxes(draw_image*255, hot_windows_large, color=(0, 0, 255), thick=6)
     #window_img = draw_boxes(window_img, hot_windows_medium, color=(0, 0, 255), thick=6) 
     #window_img = draw_boxes(window_img, hot_windows_small, color=(0, 0, 255), thick=6) 
+
+    #print(heatmap.shape,draw_image.shape)
 
     return draw_image
 
@@ -525,8 +576,8 @@ class data():
     def __init__(self):
         # HOG parameters:
         self.colourspace = 'YCrCb' # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
-        self.orient = 5
-        self.pix_per_cell = 10
+        self.orient = 9
+        self.pix_per_cell = 8
         self.cell_per_block = 2
         self.hog_channel = "ALL" # Can be 0, 1, 2, or "ALL"
         # spacial binning parameters:
@@ -545,13 +596,13 @@ class data():
         self.svc = None
         self.X_scaler = None
 
-        self.windows_large = slide_window([720,1280], x_start_stop=[None, None],
+        self.windows_large = slide_window([720,1280], x_start_stop=[400, None],
                                          y_start_stop=[400, None], 
                                          xy_window=(250, 150), xy_overlap=(0.75, 0.75))
-        self.windows_medium = slide_window([720,1280], x_start_stop=[None, None],
+        self.windows_medium = slide_window([720,1280], x_start_stop=[400, None],
                                          y_start_stop=[400, 550], 
                                          xy_window=(150, 100), xy_overlap=(0.75, 0.75))
-        self.windows_small = slide_window([720,1280], x_start_stop=[None, None],
+        self.windows_small = slide_window([720,1280], x_start_stop=[400, None],
                                          y_start_stop=[400, 500], 
                                          xy_window=(50, 50), xy_overlap=(0.75, 0.75))
         self.hot_count = 0
@@ -559,7 +610,7 @@ class data():
 
     def load(self):
 
-        dataPickle        = pickle.load(open('../classifier', "rb" ))
+        dataPickle        = pickle.load(open('../classifier2', "rb" ))
 
         self.svc                    = dataPickle[CLASSIFIER_LABEL]       
         self.X_scaler               = dataPickle[X_SCALER_LABEL]         
@@ -592,17 +643,20 @@ class data():
         dataPickle[HOG_FEAT]              = self.car_HOG_features
         dataPickle[HOG_NOT_FEAT]          = self.notcar_HOG_features
 
-        pickle.dump(dataPickle, open('../classifier', "wb" ))
+        pickle.dump(dataPickle, open('../classifier2', "wb" ))
 
 if __name__ == "__main__":
 
     NewFeatures = False
+    REPORT_PICTURES = False
+    VIDEO = True
+    TUNE = False
     
     Data = data()
 
     if NewFeatures:
-        cars = glob.glob('../vehicles/vehicles/KITTI_extracted/*.png')
-        notcars = glob.glob('../non-vehicles/non-vehicles/Extras/*.png')
+        cars = glob.glob('../vehicles/vehicles/**/*.png')
+        notcars = glob.glob('../non-vehicles/non-vehicles/**/*.png')
         print("first car image")
         print(cars[1])
         print("first not car image")
@@ -636,6 +690,8 @@ if __name__ == "__main__":
         plt.savefig('output_images/examples.png')
         plt.close(f)
 
+        print('Starting feature extraction')
+
         t1 = time.time()
         
         Data.car_features = extract_features(cars, color_space=Data.colourspace, spatial_size=Data.spatial,
@@ -660,6 +716,8 @@ if __name__ == "__main__":
                             hog_channel=Data.hog_channel)
         '''
 
+        print('Finished feature extraction')
+
         Data.save()
 
         t2 = time.time()
@@ -676,6 +734,7 @@ if __name__ == "__main__":
 
 if len(Data.car_features) > 0:
     if Data.svc == None:
+        print('Starting training')
         # Create an array stack of feature vectors
         X = np.copy(np.vstack((Data.car_features, Data.notcar_features)))
         # Fit a per-column scaler
@@ -707,7 +766,6 @@ if len(Data.car_features) > 0:
         svc = Data.svc
         X_scaler = Data.X_scaler
 
-REPORT_PICTURES = False
 if REPORT_PICTURES:
     for count, img in enumerate(test_imgs):
         draw_image = mpimg.imread(img)
@@ -723,38 +781,35 @@ if REPORT_PICTURES:
 
         plt.figure()
         plt.imshow(window_img)
-        plt.savefig('output_images/img{}.png'.format(count))
+        #plt.savefig('output_images/img{}.png'.format(count))
         plt.show()
         plt.close()
 
-# Import everything needed to edit/save/watch video clips
-from moviepy.editor import VideoFileClip
-from IPython.display import HTML
+if VIDEO:
 
-Data.hot_count = 0
-Data.hotmap = deque([])
+    Data.hot_count = 0
+    Data.hotmap = deque([])
 
-def process_image(image):
-    # NOTE: The output you return should be a color image (3 channel) for processing video below
-    # TODO: put your pipeline here,
-    # you should return the final output (image where lines are drawn on lanes)
-    image = image.astype(np.float32)/255
-    result = pipeline(Data, image)
+    def process_image(image):
+        # NOTE: The output you return should be a color image (3 channel) for processing video below
+        # TODO: put your pipeline here,
+        # you should return the final output (image where lines are drawn on lanes)
+        image = image.astype(np.float32)/255
+        result = pipeline(Data, image)
 
-    return result
+        return result
 
-first_video = 'project_video_out1.mp4'
-## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
-## To do so add .subclip(start_second,end_second) to the end of the line below
-## Where start_second and end_second are integer values representing the start and end of the subclip
-## You may also uncomment the following line for a subclip of the first 5 seconds
-clip1 = VideoFileClip('project_video.mp4') #.subclip(0,1)
-##clip1 = VideoFileClip('project_video.mp4')
-first_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+    first_video = 'project_video_out_good.mp4'
+    ## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
+    ## To do so add .subclip(start_second,end_second) to the end of the line below
+    ## Where start_second and end_second are integer values representing the start and end of the subclip
+    ## You may also uncomment the following line for a subclip of the first 5 seconds
+    clip1 = VideoFileClip('project_video.mp4') #.subclip(0,1)
+    ##clip1 = VideoFileClip('project_video.mp4')
+    first_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
 
-first_clip.write_videofile(first_video, audio=False)
+    first_clip.write_videofile(first_video, audio=False)
 
-TUNE = False
 if TUNE:
     parameters = {'kernel':('linear', 'rbf'), 'C':[1, 10]}
     param_grid = [
